@@ -1,3 +1,5 @@
+// THIS EDGE FUNCTION IS DEPLOYED AT https://near-duck-52.deno.dev/
+
 import OpenAI from "openai";
 import { Application } from "jsr:@oak/oak/application";
 import { Router } from "jsr:@oak/oak/router";
@@ -13,6 +15,19 @@ const modelName =
 const app = new Application();
 const router = new Router();
 
+// Define interface for our responses
+interface OnboardingResponse {
+  name: string;
+  timestamp: number;
+  responses: {
+    teachLLMs: string;
+    syntheticStudents: string;
+  };
+}
+
+// Open KV database
+const kv = await Deno.openKv();
+
 router.options("/(.*)", (ctx) => {
   ctx.response.headers.set("Access-Control-Allow-Origin", "*");
   ctx.response.headers.set(
@@ -24,6 +39,61 @@ router.options("/(.*)", (ctx) => {
     "Content-Type, Authorization, Accept"
   );
   ctx.response.status = 204;
+});
+
+// Add new endpoint for storing responses
+router.post("/responses", async (ctx) => {
+  ctx.response.headers.set("Access-Control-Allow-Origin", "*");
+
+  try {
+    const body = await ctx.request.body.json();
+    const { name, responses } = body;
+
+    if (!responses || typeof responses !== "object") {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Invalid response format" };
+      return;
+    }
+
+    const response: OnboardingResponse = {
+      name,
+      timestamp: Date.now(),
+      responses: {
+        teachLLMs: responses.teachLLMs || "",
+        syntheticStudents: responses.syntheticStudents || "",
+      },
+    };
+
+    // Store in KV with timestamp-based key for ordering
+    // Using ["responses", timestamp, name] allows us to list by timestamp
+    await kv.set(["responses", response.timestamp, name], response);
+
+    ctx.response.status = 200;
+    ctx.response.body = { success: true };
+  } catch (error) {
+    console.error("Error storing response:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Optional: Add endpoint to fetch responses
+router.get("/responses", async (ctx) => {
+  ctx.response.headers.set("Access-Control-Allow-Origin", "*");
+
+  try {
+    const responses = [];
+    const iter = kv.list({ prefix: ["responses"] });
+    for await (const entry of iter) {
+      responses.push(entry.value);
+    }
+
+    ctx.response.body = responses;
+  } catch (error) {
+    console.error("Error fetching responses:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
 });
 
 // Define the streaming handler
