@@ -294,7 +294,7 @@ router.post("/synthetic-student", async (ctx) => {
     const response = await openai.chat.completions.create({
       model: modelName,
       messages,
-      temperature: 0,
+      temperature: 1.0,
       tools: [
         {
           type: "function",
