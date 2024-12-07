@@ -5,7 +5,8 @@ import { Application } from "jsr:@oak/oak/application";
 import { Router } from "jsr:@oak/oak/router";
 
 const openai = new OpenAI({
-  baseURL: "https://api.deepinfra.com/v1/openai",
+  baseURL:
+    Deno.env.get("OPENAI_BASE_URL") || "https://api.deepinfra.com/v1/openai",
   apiKey: Deno.env.get("DEEPINFRA_API_KEY"),
 });
 
@@ -97,24 +98,24 @@ router.get("/responses", async (ctx) => {
 
     for await (const entry of iter) {
       const response = entry.value as OnboardingResponse;
-      
+
       // Apply filters
       if (params.since && response.timestamp < params.since) continue;
       if (params.name && response.name !== params.name) continue;
-      
+
       // Handle pagination
       if (skipped < params.offset) {
         skipped++;
         continue;
       }
-      
+
       if (included >= params.limit) break;
-      
+
       responses.push({
         ...response,
         key: entry.key, // Include the KV key for reference
       });
-      
+
       included++;
     }
 
@@ -128,10 +129,9 @@ router.get("/responses", async (ctx) => {
         filters: {
           since: params.since || null,
           name: params.name || null,
-        }
-      }
+        },
+      },
     };
-
   } catch (error) {
     console.error("Error fetching responses:", error);
     ctx.response.status = 500;
@@ -158,7 +158,10 @@ router.get("/responses/stats", async (ctx) => {
       const response = entry.value as OnboardingResponse;
       stats.total++;
       stats.uniqueNames.add(response.name);
-      stats.timeRange.first = Math.min(stats.timeRange.first, response.timestamp);
+      stats.timeRange.first = Math.min(
+        stats.timeRange.first,
+        response.timestamp
+      );
       stats.timeRange.last = Math.max(stats.timeRange.last, response.timestamp);
     }
 
@@ -166,12 +169,12 @@ router.get("/responses/stats", async (ctx) => {
       total: stats.total,
       uniqueParticipants: stats.uniqueNames.size,
       timeRange: {
-        first: stats.timeRange.first === Infinity ? null : stats.timeRange.first,
+        first:
+          stats.timeRange.first === Infinity ? null : stats.timeRange.first,
         last: stats.timeRange.last === 0 ? null : stats.timeRange.last,
         durationMs: stats.timeRange.last - stats.timeRange.first,
-      }
+      },
     };
-
   } catch (error) {
     console.error("Error getting response stats:", error);
     ctx.response.status = 500;
@@ -263,12 +266,11 @@ router.delete("/responses/:name", async (ctx) => {
     // Execute all deletes
     await Promise.all(deleteOps);
 
-    ctx.response.body = { 
-      success: true, 
+    ctx.response.body = {
+      success: true,
       deleted: count,
-      message: `Deleted ${count} responses for ${name}`
+      message: `Deleted ${count} responses for ${name}`,
     };
-
   } catch (error) {
     console.error("Error deleting responses:", error);
     ctx.response.status = 500;
