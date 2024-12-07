@@ -32,7 +32,7 @@ router.options("/(.*)", (ctx) => {
   ctx.response.headers.set("Access-Control-Allow-Origin", "*");
   ctx.response.headers.set(
     "Access-Control-Allow-Methods",
-    "GET, POST, OPTIONS"
+    "GET, POST, DELETE, OPTIONS"
   );
   ctx.response.headers.set(
     "Access-Control-Allow-Headers",
@@ -77,20 +77,103 @@ router.post("/responses", async (ctx) => {
   }
 });
 
-// Optional: Add endpoint to fetch responses
+// Add new endpoint for fetching responses with options
 router.get("/responses", async (ctx) => {
   ctx.response.headers.set("Access-Control-Allow-Origin", "*");
 
   try {
+    const url = new URL(ctx.request.url);
+    const params = {
+      limit: parseInt(url.searchParams.get("limit") || "100"),
+      offset: parseInt(url.searchParams.get("offset") || "0"),
+      since: parseInt(url.searchParams.get("since") || "0"), // timestamp
+      name: url.searchParams.get("name"), // optional name filter
+    };
+
     const responses = [];
     const iter = kv.list({ prefix: ["responses"] });
+    let skipped = 0;
+    let included = 0;
+
     for await (const entry of iter) {
-      responses.push(entry.value);
+      const response = entry.value as OnboardingResponse;
+      
+      // Apply filters
+      if (params.since && response.timestamp < params.since) continue;
+      if (params.name && response.name !== params.name) continue;
+      
+      // Handle pagination
+      if (skipped < params.offset) {
+        skipped++;
+        continue;
+      }
+      
+      if (included >= params.limit) break;
+      
+      responses.push({
+        ...response,
+        key: entry.key, // Include the KV key for reference
+      });
+      
+      included++;
     }
 
-    ctx.response.body = responses;
+    // Add metadata to response
+    ctx.response.body = {
+      responses,
+      metadata: {
+        limit: params.limit,
+        offset: params.offset,
+        count: responses.length,
+        filters: {
+          since: params.since || null,
+          name: params.name || null,
+        }
+      }
+    };
+
   } catch (error) {
     console.error("Error fetching responses:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Add endpoint to get response statistics
+router.get("/responses/stats", async (ctx) => {
+  ctx.response.headers.set("Access-Control-Allow-Origin", "*");
+
+  try {
+    const stats = {
+      total: 0,
+      uniqueNames: new Set<string>(),
+      timeRange: {
+        first: Infinity,
+        last: 0,
+      },
+    };
+
+    const iter = kv.list({ prefix: ["responses"] });
+    for await (const entry of iter) {
+      const response = entry.value as OnboardingResponse;
+      stats.total++;
+      stats.uniqueNames.add(response.name);
+      stats.timeRange.first = Math.min(stats.timeRange.first, response.timestamp);
+      stats.timeRange.last = Math.max(stats.timeRange.last, response.timestamp);
+    }
+
+    ctx.response.body = {
+      total: stats.total,
+      uniqueParticipants: stats.uniqueNames.size,
+      timeRange: {
+        first: stats.timeRange.first === Infinity ? null : stats.timeRange.first,
+        last: stats.timeRange.last === 0 ? null : stats.timeRange.last,
+        durationMs: stats.timeRange.last - stats.timeRange.first,
+      }
+    };
+
+  } catch (error) {
+    console.error("Error getting response stats:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
@@ -147,6 +230,47 @@ router.post("/chat", async (ctx) => {
     ctx.response.body = readable;
   } catch (error) {
     console.error("Error in chat endpoint:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
+// Add endpoint to delete responses by name
+router.delete("/responses/:name", async (ctx) => {
+  ctx.response.headers.set("Access-Control-Allow-Origin", "*");
+
+  try {
+    const name = ctx.params.name;
+    if (!name) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Name parameter is required" };
+      return;
+    }
+
+    // Find all entries for this name
+    const iter = kv.list({ prefix: ["responses"] });
+    const deleteOps = [];
+    let count = 0;
+
+    for await (const entry of iter) {
+      const response = entry.value as OnboardingResponse;
+      if (response.name === name) {
+        deleteOps.push(kv.delete(entry.key));
+        count++;
+      }
+    }
+
+    // Execute all deletes
+    await Promise.all(deleteOps);
+
+    ctx.response.body = { 
+      success: true, 
+      deleted: count,
+      message: `Deleted ${count} responses for ${name}`
+    };
+
+  } catch (error) {
+    console.error("Error deleting responses:", error);
     ctx.response.status = 500;
     ctx.response.body = { error: "Internal server error" };
   }
