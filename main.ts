@@ -13,7 +13,6 @@ const modelName =
 const app = new Application();
 const router = new Router();
 
-// Handle preflight for all routes
 router.options("/(.*)", (ctx) => {
   ctx.response.headers.set("Access-Control-Allow-Origin", "*");
   ctx.response.headers.set(
