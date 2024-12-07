@@ -278,6 +278,68 @@ router.delete("/responses/:name", async (ctx) => {
   }
 });
 
+router.post("/synthetic-student", async (ctx) => {
+  ctx.response.headers.set("Access-Control-Allow-Origin", "*");
+
+  try {
+    const body = await ctx.request.body.json();
+    const { messages } = body;
+
+    if (!messages || !Array.isArray(messages)) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Invalid messages format" };
+      return;
+    }
+
+    const response = await openai.chat.completions.create({
+      model: modelName,
+      messages,
+      temperature: 0,
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "provide_student_response",
+            description:
+              "Share the synthetic student's name and their response to the prompt",
+            parameters: {
+              type: "object",
+              properties: {
+                name: {
+                  type: "string",
+                  description: "The synthetic student's name",
+                },
+                response: {
+                  type: "string",
+                  description:
+                    "The student's response to the prompt, reflecting their assigned trait levels",
+                },
+              },
+              required: ["name", "response"],
+            },
+          },
+        },
+      ],
+    });
+
+    // Extract the function call result
+    const toolCall = response.choices[0].message.tool_calls?.[0];
+    if (!toolCall) {
+      ctx.response.status = 500;
+      ctx.response.body = { error: "No student response generated" };
+      return;
+    }
+
+    // Parse and return the function arguments
+    const studentResponse = JSON.parse(toolCall.function.arguments);
+    ctx.response.body = studentResponse;
+  } catch (error) {
+    console.error("Error in synthetic student endpoint:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Internal server error" };
+  }
+});
+
 // Set up middleware
 app.use(router.routes());
 app.use(router.allowedMethods());
